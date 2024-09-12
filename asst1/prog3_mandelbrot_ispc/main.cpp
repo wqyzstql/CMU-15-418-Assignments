@@ -181,7 +181,7 @@ int main(int argc, char** argv) {
         //
         // Tasking version of the ISPC code
         //
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 30; ++i) {
             double startTime = CycleTimer::currentSeconds();
             mandelbrot_ispc_withtasks(x0, y0, x1, y1, width, height, maxIterations, output_ispc_tasks);
             double endTime = CycleTimer::currentSeconds();
