@@ -5,7 +5,7 @@
 #include "saxpy_ispc.h"
 
 extern void saxpySerial(int N, float a, float* X, float* Y, float* result);
-
+//memory speed is the limitation of this program.
 
 // return GB/s
 static float
