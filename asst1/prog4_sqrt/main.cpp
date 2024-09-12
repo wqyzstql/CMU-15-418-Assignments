@@ -9,7 +9,7 @@
 using namespace ispc;
 
 extern void sqrtSerial(int N, float startGuess, float* values, float* output);
-extern void sqrt_avx2(int N, float startGuess, float* values, float* output);
+extern void sqrt_avx2(int N, float startGuess, float* values, float* output, float *temp);
 
 static void verifyResult(int N, float* result, float* gold) {
     for (int i=0; i<N; i++) {
@@ -26,6 +26,7 @@ int main() {
 
     float* values = new float[N];
     float* output = new float[N];
+    float* temp = new float[N];
     float* gold = new float[N];
         
     for (unsigned int i=0; i<N; i+=8)
@@ -37,7 +38,7 @@ int main() {
          // starter code populates array with random input values
         // values[i] = .001f + 2.998f * static_cast<float>(rand()) / RAND_MAX;
         for(int j=i;j<i+8;j++)
-            values[j] = 2.678f;
+            values[j] = 1.678f;
     }
 
 
@@ -78,11 +79,11 @@ int main() {
     verifyResult(N, output, gold);
 
     for (unsigned int i = 0; i < N; ++i)
-        output[i] = 0;
+        output[i] = temp[i]= 0;
     double minAVX2 = 1e30;
     for (int i = 0; i < 1; ++i) {
         double startTime = CycleTimer::currentSeconds();
-        sqrt_avx2(N, initialGuess, values, output);
+        sqrt_avx2(N, initialGuess, values, output,temp);
         double endTime = CycleTimer::currentSeconds();
         minAVX2 = std::min(minAVX2, endTime - startTime);
     }

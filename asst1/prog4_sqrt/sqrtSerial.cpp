@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <immintrin.h>
 
-void sqrt_avx2(int N, float initialGuess, float* values,float* output){
+void sqrt_avx2(int N, float initialGuess, float* values,float* output,float* tmp){
     __m256 x, guess, temp, error, kThreshold, temp2, zero;
     __m256 onef, threef, half;
     onef=_mm256_set1_ps(1.f);
@@ -14,13 +14,17 @@ void sqrt_avx2(int N, float initialGuess, float* values,float* output){
     for(int i=0;i<N;i+=8){
         x=_mm256_loadu_ps(values+i);
         guess=_mm256_set1_ps(initialGuess);
+
         temp=_mm256_mul_ps(guess, guess);
         temp=_mm256_mul_ps(temp, x);
-        temp=_mm256_sub_ps(temp, onef);
-        error=temp;
-
-        __m256 mask=_mm256_cmp_ps(kThreshold, error, _CMP_LT_OQ);
+        temp=_mm256_sub_ps(temp, onef);//temp = guess * guess * x - 1.f
+        __m256 mask=_mm256_cmp_ps(temp, zero, _CMP_LT_OQ);//if temp<0, mask=1
+        temp2=_mm256_sub_ps(zero, temp);//temp2 = -temp1
+        error=_mm256_blendv_ps(temp, temp2, mask);//if temp<0 temp1 =-temp1
+        
+        mask=_mm256_cmp_ps(kThreshold, error, _CMP_LT_OQ);
         int flag=_mm256_movemask_ps(mask);
+
         while(flag!=0){
             temp=_mm256_mul_ps(x, guess);
             temp=_mm256_mul_ps(temp, guess);
@@ -32,17 +36,18 @@ void sqrt_avx2(int N, float initialGuess, float* values,float* output){
 
             guess=_mm256_blendv_ps(guess, temp, mask);
 
-            temp2=_mm256_mul_ps(temp, temp);
-            temp2=_mm256_mul_ps(temp, x);
+            temp2=_mm256_mul_ps(guess, guess);
+            temp2=_mm256_mul_ps(temp2, x);
             temp2=_mm256_sub_ps(temp2, onef);
             
-            __m256 mask2=_mm256_cmp_ps(temp2, zero, _CMP_LT_OQ);
+            __m256 mask2=_mm256_cmp_ps(temp2, zero, _CMP_LT_OQ);// if temp2<0 flag=1
             temp=_mm256_sub_ps(zero, temp2);
             error=_mm256_blendv_ps(temp2, temp, mask2);
 
             mask=_mm256_cmp_ps(kThreshold, error, _CMP_LT_OQ);
             flag=_mm256_movemask_ps(mask);
         }
+        guess=_mm256_mul_ps(guess, x);
         _mm256_storeu_ps(output+i,guess);
     }
     return;
