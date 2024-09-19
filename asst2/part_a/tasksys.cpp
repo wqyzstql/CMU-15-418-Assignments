@@ -212,6 +212,47 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    kill=0;
+    threads_num=num_threads;
+    mutex = new std::mutex();
+    finished_ = new std::condition_variable();
+    runnable_ = nullptr;
+    num_total_tasks_ = 0;
+    num_now_ = 0;
+    finish_task=0; 
+    run_lock_=new std::mutex();
+    threads_pool=std::vector<std::thread>(num_threads);
+    thread_awake=new std::condition_variable();
+    thread_lock=new std::mutex();
+    for(int i=0;i<num_threads;i++){
+        threads_pool[i]=std::thread([=]{
+            while(1){
+                if(kill==1)   break;
+                int fetch_task=-1;
+                mutex->lock();
+                fetch_task=num_now_;
+                if(num_now_<num_total_tasks_)
+                    num_now_++;
+                mutex->unlock();
+                if(fetch_task<num_total_tasks_){
+                    runnable_->runTask(fetch_task, num_total_tasks_);
+                    mutex->lock();
+                    finish_task++;
+                    if(finish_task==num_total_tasks_){// this if must be included in mutex
+                        run_lock_->lock();
+                        //make sure that main thread has locked finished_
+                        finished_->notify_all();
+                        run_lock_->unlock();
+                        mutex->unlock();    
+                    }else 
+                        mutex->unlock();
+                }else { //now there are no tasks
+                    std::unique_lock<std::mutex> thread_sleep(*thread_lock);
+                    thread_awake->wait(thread_sleep);
+                }
+            }
+        });
+    }
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -221,6 +262,16 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    kill=1;
+    for(int i=0;i<threads_num;i++)
+        thread_awake->notify_all();
+    for(auto &it:threads_pool)  
+        if(it.joinable())   it.join();
+    delete mutex;
+    delete run_lock_;
+    delete finished_;
+    delete thread_awake;
+    delete thread_lock; 
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -231,10 +282,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
-
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
-    }
+    std::unique_lock<std::mutex> run_lock(*run_lock_);
+    mutex->lock();
+    runnable_=runnable;
+    num_total_tasks_=num_total_tasks;
+    num_now_=0;
+    finish_task=0; 
+    mutex->unlock();
+    for(int i=0;i<threads_num;i++)
+        thread_awake->notify_all();
+    finished_->wait(run_lock);  
+    return;
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

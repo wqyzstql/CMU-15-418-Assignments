@@ -60,6 +60,7 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
         IRunnable* runnable_;
         int num_total_tasks_, num_now_, finish_task;
         std::condition_variable *finished_;
+        
         std::mutex *run_lock_;
     public:
         TaskSystemParallelThreadPoolSpinning(int num_threads);
@@ -78,6 +79,17 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * itasksys.h for documentation of the ITaskSystem interface.
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
+    private:
+        std::vector<std::thread> threads_pool;
+        int threads_num;
+        bool kill;
+        std::mutex *mutex;
+        IRunnable* runnable_;
+        int num_total_tasks_, num_now_, finish_task;
+        std::condition_variable *finished_;
+        std::condition_variable *thread_awake;
+        std::mutex *run_lock_;
+        std::mutex *thread_lock;
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();
