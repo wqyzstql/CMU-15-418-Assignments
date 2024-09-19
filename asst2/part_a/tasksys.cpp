@@ -147,8 +147,9 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
                     finish_task++;
                     if(finish_task==num_total_tasks_){// this if must be included in mutex
                         run_lock_->lock();
-                        run_lock_->unlock();//make sure that main thread has locked finished_
+                        //make sure that main thread has locked finished_
                         finished_->notify_all();
+                        run_lock_->unlock();
                         mutex->unlock();    
                     }else 
                         mutex->unlock();
