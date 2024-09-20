@@ -158,8 +158,7 @@ TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
 void TaskSystemParallelThreadPoolSpinning::spinningThread() {
     int id;
     int total;
-    while (true)
-    {
+    while (true){
         if (killed) break;
         state_->mutex_->lock();
         total = state_->num_total_tasks_;
@@ -196,10 +195,7 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     state_->num_total_tasks_ = num_total_tasks;
     state_->runnable_ = runnable;
     state_->mutex_->unlock();
-    // go to sleep, wait for all the tasks to finish
-    //std::cerr << "go to sleep" << std::endl;
     state_->finished_->wait(lk); 
-    lk.unlock();
 }
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -262,8 +258,7 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
 void TaskSystemParallelThreadPoolSleeping::sleepingThread() {
     int id;
     int total;
-    while (true)
-    {
+    while (true){
         if (killed) break;
         state_->mutex_->lock();
         total = state_->num_total_tasks_;
@@ -286,7 +281,6 @@ void TaskSystemParallelThreadPoolSleeping::sleepingThread() {
         } else {
             std::unique_lock<std::mutex> lk(*hasTasksMutex);
             hasTasks->wait(lk);
-            lk.unlock();
         }
     }
 }
@@ -303,13 +297,9 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     state_->num_total_tasks_ = num_total_tasks;
     state_->runnable_ = runnable;
     state_->mutex_->unlock();
-    for (int i = 0; i < num_total_tasks; i++)
+    for (int i = 0; i < num_threads_; i++)
         hasTasks->notify_all();
-    // go to sleep, wait for all the tasks to finish
-    //std::cerr << "go to sleep" << std::endl;
     state_->finished_->wait(lk); 
-    lk.unlock();
-
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
