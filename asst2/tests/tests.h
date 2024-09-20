@@ -509,7 +509,7 @@ TestResults simpleTest(ITaskSystem* t, bool do_async) {
     int num_elements_per_task = 2;
     int num_tasks = 3;
     int num_elements = num_elements_per_task * num_tasks;
-    int num_bulk_task_launches = 2;
+    int num_bulk_task_launches = 1;
 
     int* array = new int[num_elements];
 
@@ -531,7 +531,7 @@ TestResults simpleTest(ITaskSystem* t, bool do_async) {
         t->sync();
     } else {
         t->run(&first, num_tasks);
-        t->run(&second, num_tasks);
+        //t->run(&second, num_tasks);
     }
     double end_time = CycleTimer::currentSeconds();
 

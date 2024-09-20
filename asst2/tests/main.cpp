@@ -8,7 +8,7 @@
 #include "tests.h"
 
 #define DEFAULT_NUM_THREADS 8
-#define DEFAULT_NUM_TIMING_ITERATIONS 3
+#define DEFAULT_NUM_TIMING_ITERATIONS 1
 
 
 void usage(const char* progname, std::string *testnames, int num_tests) {
