@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <queue>
 #include <iostream>
+#include <deque>
 
 
 /*
@@ -96,14 +97,29 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * a thread pool. See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
+class Task{
+    public:
+        TaskID id;
+        int in, total_tasks_, finished_tasks_, left_tasks_;
+        std::vector<int> to;
+        bool finished;
+        IRunnable* runnable_;
+        Task(TaskID id,int in);
+        Task();
+        ~Task();
+};
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     private:
+        int cnt;
         TasksState* state_;
         std::thread* threads_pool_;
         std::condition_variable* hasTasks; 
         std::mutex* hasTasksMutex;
         bool killed;
+        int selected;
         int num_threads_;
+        std::deque<Task> qu;
+        std::vector<Task> v;
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();

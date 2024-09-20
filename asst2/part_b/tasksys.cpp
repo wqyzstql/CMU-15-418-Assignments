@@ -28,6 +28,9 @@ void TaskSystemSerial::run(IRunnable* runnable, int num_total_tasks) {
 
 TaskID TaskSystemSerial::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                           const std::vector<TaskID>& deps) {
+    for (int i = 0; i < num_total_tasks; i++) {
+        runnable->runTask(i, num_total_tasks);
+    }
     return 0;
 }
 
@@ -97,6 +100,9 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
 
 TaskID TaskSystemParallelSpawn::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                                  const std::vector<TaskID>& deps) {
+    for (int i = 0; i < num_total_tasks; i++) {
+        runnable->runTask(i, num_total_tasks);
+    }
     return 0;
 }
 
@@ -200,6 +206,9 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                                               const std::vector<TaskID>& deps) {
+    for (int i = 0; i < num_total_tasks; i++) {
+        runnable->runTask(i, num_total_tasks);
+    }    
     return 0;
 }
 
@@ -216,7 +225,18 @@ void TaskSystemParallelThreadPoolSpinning::sync() {
 const char* TaskSystemParallelThreadPoolSleeping::name() {
     return "Parallel + Thread Pool + Sleep";
 }
+Task::Task(TaskID id, int in){
+    this->id=id;
+    this->in=in;
+    total_tasks_=finished_tasks_=left_tasks_=0;
+    finished=false;
+}
+Task::Task(){
 
+}
+Task::~Task(){
+
+}
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): ITaskSystem(num_threads) {
     //
     // TODO: CS149 student implementations may decide to perform setup
@@ -226,10 +246,13 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     //
     state_ = new TasksState;
     killed = false;
+    cnt=0;
+    selected=-1;
     threads_pool_ = new std::thread[num_threads];
     num_threads_ = num_threads;
     hasTasks = new std::condition_variable();
     hasTasksMutex = new std::mutex();
+    v=std::vector<Task>(65536);
     for (int i = 0; i < num_threads; i++) {
         threads_pool_[i] = std::thread(&TaskSystemParallelThreadPoolSleeping::sleepingThread, this);
     }
@@ -242,6 +265,7 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    cnt=0;
     killed = true;
     for (int i = 0; i < num_threads_; i++) {
         hasTasks->notify_all();
@@ -260,27 +284,67 @@ void TaskSystemParallelThreadPoolSleeping::sleepingThread() {
     int total;
     while (true){
         if (killed) break;
+        bool have_task=1;
         state_->mutex_->lock();
-        total = state_->num_total_tasks_;
-        id = total - state_->left_tasks_;
-        if (id < total) state_->left_tasks_--;
-        state_->mutex_->unlock();
-        if (id < total) {
-            state_->runnable_->runTask(id, total);
-            state_->mutex_->lock();
-            state_->finished_tasks_++;
-            if (state_->finished_tasks_ == total) {
-                state_->mutex_->unlock();
-                // this lock is necessary to ensure the main thread has gone to sleep
-                state_->finishedMutex_->lock();
-                state_->finishedMutex_->unlock();
-                state_->finished_->notify_all();
+        if(selected==-1){
+            if(qu.empty()){
+                have_task=0;
+                bool fi=1;
+                for(int i=0;i<cnt;i++)  if(v[i].finished==0){
+                    fi=0;
+                    break;
+                }
+                if(fi){
+                    state_->finishedMutex_->lock();
+                    state_->finishedMutex_->unlock();
+                    state_->finished_->notify_all();
+                }
             }else {
-                state_->mutex_->unlock();
+                Task temp=qu.front();
+                qu.pop_front();
+                selected=temp.id;
+                state_->num_total_tasks_=v[selected].total_tasks_;
+                state_->left_tasks_=state_->num_total_tasks_;
+                state_->finished_tasks_=0;
+                state_->runnable_=v[selected].runnable_;
             }
-        } else {
+        }
+        //std::cout<<selected<<" "<<std::this_thread::get_id()<<std::endl;
+        state_->mutex_->unlock();
+        if(have_task==0){
             std::unique_lock<std::mutex> lk(*hasTasksMutex);
             hasTasks->wait(lk);
+        }else {
+            state_->mutex_->lock();
+            total=state_->num_total_tasks_;
+            id=total-state_->left_tasks_;
+            if(id<total)    state_->left_tasks_--;
+            state_->mutex_->unlock();
+            if(id<total){
+                state_->runnable_->runTask(id, total);
+                state_->mutex_->lock();
+                state_->finished_tasks_++;
+                //std::cout<<state_->finished_tasks_<<" "<<std::this_thread::get_id()<<std::endl;
+                if(state_->finished_tasks_==total){
+                    //std::cout<<selected<<std::endl;
+                    v[selected].finished=1;
+                    Task temp=v[selected];
+                    for(auto &it:temp.to){
+                        v[it].in--;
+                        if(v[it].in==0)
+                            qu.push_back(v[it]);
+                    }
+                    for(int i=0; i<num_threads_; i++) 
+                        hasTasks->notify_all();
+                    selected=-1;
+                    state_->mutex_->unlock();
+                }else {
+                    state_->mutex_->unlock();
+                }
+            }else {
+                std::unique_lock<std::mutex> lk(*hasTasksMutex);
+                hasTasks->wait(lk);
+            }
         }
     }
 }
@@ -290,27 +354,42 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
-    std::unique_lock<std::mutex> lk(*(state_->finishedMutex_));
-    state_->mutex_->lock();
-    state_->finished_tasks_ = 0;
-    state_->left_tasks_ = num_total_tasks;
-    state_->num_total_tasks_ = num_total_tasks;
-    state_->runnable_ = runnable;
-    state_->mutex_->unlock();
-    for (int i = 0; i < num_threads_; i++)
-        hasTasks->notify_all();
-    state_->finished_->wait(lk); 
+    for (int i = 0; i < num_total_tasks; i++) {
+        runnable->runTask(i, num_total_tasks);
+    }    
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                                     const std::vector<TaskID>& deps) {
-
-
     //
     // TODO: CS149 students will implement this method in Part B.
     //
-
-    return 0;
+    TaskID ID=cnt++;
+    int realin=0;
+    Task temp = Task(ID, deps.size());
+    temp.total_tasks_=num_total_tasks;
+    temp.finished_tasks_=0;
+    temp.left_tasks_=num_total_tasks;
+    temp.runnable_=runnable;
+    state_->mutex_->lock();
+    for(auto &j:deps){
+        if(v[j].finished==1)    continue;
+        v[j].to.push_back(ID);
+        realin++;
+    }
+    temp.in=realin;
+    v[ID]=temp;
+    if(temp.in==0){
+        qu.push_back(temp); 
+        for(int i=0; i<num_threads_; i++) 
+            hasTasks->notify_all();
+        //std::cout<<ID<<std::endl;
+    }
+    state_->mutex_->unlock();
+    // for(int i=0;i<=ID;i++)
+    //     printf("%d %d || ",v[i].id, v[i].finished);
+    // puts("");
+    return ID;
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
@@ -318,6 +397,9 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
     //
     // TODO: CS149 students will modify the implementation of this method in Part B.
     //
-
+    // for(int i=0;i<cnt;i++)
+    //     printf("%d %d || \n",v[i].id, v[i].finished);
+    std::unique_lock<std::mutex> lk(*(state_->finishedMutex_));
+    state_->finished_->wait(lk);
     return;
 }
