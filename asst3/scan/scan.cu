@@ -2,138 +2,282 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+
 #include <driver_functions.h>
+
+#include <thrust/scan.h>
+#include <thrust/device_ptr.h>
+#include <thrust/device_malloc.h>
+#include <thrust/device_free.h>
 
 #include "CycleTimer.h"
 
+#define THREADS_PER_BLOCK 256
 
-// return GB/sec
-float GBPerSec(int bytes, float sec) {
-  return static_cast<float>(bytes) / (1024. * 1024. * 1024.) / sec;
+
+// helper function to round an integer up to the next power of 2
+static inline int nextPow2(int n) {
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n++;
+    return n;
 }
 
+// exclusive_scan --
+//
+// Implementation of an exclusive scan on global memory array `input`,
+// with results placed in global memory `result`.
+//
+// N is the logical size of the input and output arrays, however
+// students can assume that both the start and result arrays we
+// allocated with next power-of-two sizes as described by the comments
+// in cudaScan().  This is helpful, since your parallel scan
+// will likely write to memory locations beyond N, but of course not
+// greater than N rounded up to the next power of 2.
+//
+// Also, as per the comments in cudaScan(), you can implement an
+// "in-place" scan, since the timing harness makes a copy of input and
+// places it in result
+__global__ void add(int *a, int two_dplus, int two_d, int N){
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    i *= two_dplus;
+    if(i < N)
+        a[i + two_dplus - 1] += a[i + two_d - 1];
+    return;
+}
+__global__ void redu(int *a, int two_dplus, int two_d, int N){
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    i *= two_dplus;
+    if(i < N){
+        int t = a[i + two_d - 1];
+        a[i + two_d - 1] = a[i + two_dplus - 1];
+        a[i + two_dplus - 1] += t;
+    }
+    return;
+}
+__global__ void zero(int *a, int i){
+    a[i] = 0;
+    return;
+}
 
-// This is the CUDA "kernel" function that is run on the GPU.  You
-// know this because it is marked as a __global__ function.
-__global__ void
-saxpy_kernel(int N, float alpha, float* x, float* y, float* result) {
+void exclusive_scan(int* input, int N, int* result)
+{
 
-    // compute overall thread index from position of thread in current
-    // block, and given the block we are in (in this example only a 1D
-    // calculation is needed so the code only looks at the .x terms of
-    // blockDim and threadIdx.
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    // this check is necessary to make the code work for values of N
-    // that are not a multiple of the thread block size (blockDim.x)
-    if (index < N)
-       result[index] = alpha * x[index] + y[index];
-    
+    // CS149 TODO:
+    //
+    // Implement your exclusive scan implementation here.  Keep in
+    // mind that although the arguments to this function are device
+    // allocated arrays, this is a function that is running in a thread
+    // on the CPU.  Your implementation will need to make multiple calls
+    // to CUDA kernel functions (that you must write) to implement the
+    // scan.
+    dim3 block(32);
+    dim3 grid_f((N + block.x - 1) / block.x);
+    for(int two_d=1;two_d<=N>>1;two_d<<=1){
+        int two_dplus = two_d<<1;
+        add<<<grid_f,block>>>(input, two_dplus, two_d, N);
+    }
+    zero<<<1,1>>>(input,N-1);
+    for(int two_d=N>>1;two_d>=1;two_d>>=1){
+        int two_dplus=two_d<<1;
+        redu<<<grid_f,block>>>(input, two_dplus, two_d, N);
+    }
+    cudaMemcpy(result, input, N*sizeof(int), cudaMemcpyDeviceToDevice);
     return;
 }
 
 
-// saxpyCuda --
 //
-// This function is regular C code running on the CPU.  It allocates
-// memory on the GPU using CUDA API functions, uses CUDA API functions
-// to transfer data from the CPU's memory address space to GPU memory
-// address space, and launches the CUDA kernel function on the GPU.
-void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultarray) {
+// cudaScan --
+//
+// This function is a timing wrapper around the student's
+// implementation of scan - it copies the input to the GPU
+// and times the invocation of the exclusive_scan() function
+// above. Students should not modify it.
+double cudaScan(int* inarray, int* end, int* resultarray)
+{
+    int* device_result;
+    int* device_input;
+    int N = end - inarray;
 
-    // must read both input arrays (xarray and yarray) and write to
-    // output array (resultarray)
-    int totalBytes = sizeof(float) * 3 * N;
+    // This code rounds the arrays provided to exclusive_scan up
+    // to a power of 2, but elements after the end of the original
+    // input are left uninitialized and not checked for correctness.
+    //
+    // Student implementations of exclusive_scan may assume an array's
+    // allocated length is a power of 2 for simplicity. This will
+    // result in extra work on non-power-of-2 inputs, but it's worth
+    // the simplicity of a power of two only solution.
 
-    // compute number of blocks and threads per block.  In this
-    // application we've hardcoded thread blocks to contain 512 CUDA
-    // threads.
-    const int threadsPerBlock = 512;
+    int rounded_length = nextPow2(end - inarray);
 
-    // Notice the round up here.  The code needs to compute the number
-    // of threads blocks needed such that there is one thread per
-    // element of the arrays.  This code is written to work for values
-    // of N that are not multiples of threadPerBlock.
-    const int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+    cudaMalloc((void **)&device_result, sizeof(int) * rounded_length);
+    cudaMalloc((void **)&device_input, sizeof(int) * rounded_length);
 
-    // These are pointers that will be pointers to memory allocated
-    // *one the GPU*.  You should allocate these pointers via
-    // cudaMalloc.  You can access the resulting buffers from CUDA
-    // device kernel code (see the kernel function saxpy_kernel()
-    // above) but you cannot access the contents these buffers from
-    // this thread. CPU threads cannot issue loads and stores from GPU
-    // memory!
-    float* device_x = nullptr;
-    float* device_y = nullptr;
-    float* device_result = nullptr;
-    cudaMalloc(&device_x, totalBytes);
-    cudaMalloc(&device_y, totalBytes);
-    cudaMalloc(&device_result, totalBytes);
-    //
-    // CS149 TODO: allocate device memory buffers on the GPU using cudaMalloc.
-    //
-    // We highly recommend taking a look at NVIDIA's
-    // tutorial, which clearly walks you through the few lines of code
-    // you need to write for this part of the assignment:
-    //
-    // https://devblogs.nvidia.com/easy-introduction-cuda-c-and-c/
-    //
-        
-    // start timing after allocation of device memory
-    
+    // For convenience, both the input and output vectors on the
+    // device are initialized to the input values. This means that
+    // students are free to implement an in-place scan on the result
+    // vector if desired.  If you do this, you will need to keep this
+    // in mind when calling exclusive_scan from find_repeats.
+    cudaMemcpy(device_input, inarray, (end - inarray) * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_result, inarray, (end - inarray) * sizeof(int), cudaMemcpyHostToDevice);
+
     double startTime = CycleTimer::currentSeconds();
-    cudaMemcpy(device_x, xarray, N, cudaMemcpyHostToDevice);
-    cudaMemcpy(device_y, yarray, N, cudaMemcpyHostToDevice);
-    //
-    // CS149 TODO: copy input arrays to the GPU using cudaMemcpy
-    //
-    
-   
-    // run CUDA kernel. (notice the <<< >>> brackets indicating a CUDA
-    // kernel launch) Execution on the GPU occurs here.
-    double KernelTimeStart = CycleTimer::currentSeconds();
-    saxpy_kernel<<<blocks, threadsPerBlock>>>(N, alpha, device_x, device_y, device_result);
+
+    exclusive_scan(device_input, N, device_result);
+
+    // Wait for completion
     cudaDeviceSynchronize();
-    double KernelTimeEnd = CycleTimer::currentSeconds();
-    //
-    // CS149 TODO: copy result from GPU back to CPU using cudaMemcpy
-    //
-    cudaMemcpy(resultarray, device_result, N, cudaMemcpyDeviceToHost);
-    
-    // end timing after result has been copied back into host memory
     double endTime = CycleTimer::currentSeconds();
 
-    cudaError_t errCode = cudaPeekAtLastError();
-    if (errCode != cudaSuccess) {
-        fprintf(stderr, "WARNING: A CUDA error occured: code=%d, %s\n",
-		errCode, cudaGetErrorString(errCode));
-    }
+    cudaMemcpy(resultarray, device_result, (end - inarray) * sizeof(int), cudaMemcpyDeviceToHost);
 
     double overallDuration = endTime - startTime;
-    double KernelDuration = KernelTimeEnd - KernelTimeStart;
-    printf("Effective BW by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * overallDuration, GBPerSec(totalBytes, overallDuration));
-    printf("Effective Kernel by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * KernelDuration, GBPerSec(totalBytes, KernelDuration));
-    //
-    // CS149 TODO: free memory buffers on the GPU using cudaFree
-    //
-    cudaFree(device_x);
-    cudaFree(device_y);
-    cudaFree(device_result);
-    return;
-    
+    return overallDuration;
 }
 
-void printCudaInfo() {
 
-    // print out stats about the GPU in the machine.  Useful if
-    // students want to know what GPU they are running on.
+// cudaScanThrust --
+//
+// Wrapper around the Thrust library's exclusive scan function
+// As above in cudaScan(), this function copies the input to the GPU
+// and times only the execution of the scan itself.
+//
+// Students are not expected to produce implementations that achieve
+// performance that is competition to the Thrust version, but it is fun to try.
+double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 
+    int length = end - inarray;
+    thrust::device_ptr<int> d_input = thrust::device_malloc<int>(length);
+    thrust::device_ptr<int> d_output = thrust::device_malloc<int>(length);
+
+    cudaMemcpy(d_input.get(), inarray, length * sizeof(int), cudaMemcpyHostToDevice);
+
+    double startTime = CycleTimer::currentSeconds();
+
+    thrust::exclusive_scan(d_input, d_input + length, d_output);
+
+    cudaDeviceSynchronize();
+    double endTime = CycleTimer::currentSeconds();
+
+    cudaMemcpy(resultarray, d_output.get(), length * sizeof(int), cudaMemcpyDeviceToHost);
+
+    thrust::device_free(d_input);
+    thrust::device_free(d_output);
+
+    double overallDuration = endTime - startTime;
+    return overallDuration;
+}
+
+
+// find_repeats --
+//
+// Given an array of integers `device_input`, returns an array of all
+// indices `i` for which `device_input[i] == device_input[i+1]`.
+//
+// Returns the total number of pairs found
+__global__ void fr(int *input, int N, int *output){
+    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    if(i + 1 < N){
+        if(input[i] == input[i + 1])
+            output[i] = 1;
+    }
+    return;
+}
+__global__ void sub(int *input, int N, int *output){
+    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    if(i + 1 < N){
+        output[i] = input[i + 1] - input[i];
+    }
+    return;
+}
+__global__ void work(int *input, int *temp, int N, int *output){
+    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    if(i + 1 < N){
+        if(input[i] == 1){
+            output[temp[i]] = i;
+        }
+    }
+    return;
+}
+
+int find_repeats(int* device_input, int length, int* device_output, int *temp) {
+
+    // CS149 TODO:
+    //
+    // Implement this function. You will probably want to
+    // make use of one or more calls to exclusive_scan(), as well as
+    // additional CUDA kernel launches.
+    //
+    // Note: As in the scan code, the calling code ensures that
+    // allocated arrays are a power of 2 in size, so you can use your
+    // exclusive_scan function with them. However, your implementation
+    // must ensure that the results of find_repeats are correct given
+    // the actual array length.
+    dim3 block(32);
+    int rlength = nextPow2(length);
+    dim3 grid((rlength + block.x - 1) / block.x);
+    fr<<<grid, block>>>(device_input, length, temp);
+    exclusive_scan(temp, rlength, temp);
+    sub<<<grid, block>>>(temp, length, device_input);
+    work<<<grid, block>>>(device_input, temp, length, device_output);
+    int *result = new int;
+    cudaMemcpy(result, temp + length - 1, sizeof(int), cudaMemcpyDeviceToHost);
+    return *result;
+}
+
+
+//
+// cudaFindRepeats --
+//
+// Timing wrapper around find_repeats. You should not modify this function.
+double cudaFindRepeats(int *input, int length, int *output, int *output_length) {
+
+    int *device_input;
+    int *device_output;
+    int rounded_length = nextPow2(length);
+    int *temp;
+
+    cudaMalloc((void **)&temp, rounded_length * sizeof(int));
+    cudaMalloc((void **)&device_input, rounded_length * sizeof(int));
+    cudaMalloc((void **)&device_output, rounded_length * sizeof(int));
+    cudaMemcpy(device_input, input, length * sizeof(int), cudaMemcpyHostToDevice);
+
+    cudaDeviceSynchronize();
+    double startTime = CycleTimer::currentSeconds();
+
+    int result = find_repeats(device_input, length, device_output, temp);
+
+    cudaDeviceSynchronize();
+    double endTime = CycleTimer::currentSeconds();
+
+    // set output count and results array
+    *output_length = result;
+    cudaMemcpy(output, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaFree(device_input);
+    cudaFree(device_output);
+
+    float duration = endTime - startTime;
+    return duration;
+}
+
+
+
+void printCudaInfo()
+{
     int deviceCount = 0;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
 
     printf("---------------------------------------------------------\n");
     printf("Found %d CUDA devices\n", deviceCount);
 
-    for (int i=0; i<deviceCount; i++) {
+    for (int i=0; i<deviceCount; i++)
+    {
         cudaDeviceProp deviceProps;
         cudaGetDeviceProperties(&deviceProps, i);
         printf("Device %d: %s\n", i, deviceProps.name);
