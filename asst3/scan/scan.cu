@@ -17,14 +17,10 @@
 
 // helper function to round an integer up to the next power of 2
 static inline int nextPow2(int n) {
-    n--;
-    n |= n >> 1;
-    n |= n >> 2;
-    n |= n >> 4;
-    n |= n >> 8;
-    n |= n >> 16;
-    n++;
-    return n;
+    int i=1;
+    while(n>i)  i<<=1;
+    printf("%d\n",i);
+    return i;
 }
 
 // exclusive_scan --
@@ -64,7 +60,7 @@ __global__ void zero(int *a, int i){
     return;
 }
 
-void exclusive_scan(int* input, int N, int* result)
+void exclusive_scan(int* input, int N, int* result, int lim)
 {
 
     // CS149 TODO:
@@ -76,15 +72,18 @@ void exclusive_scan(int* input, int N, int* result)
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
     dim3 block(32);
-    dim3 grid_f((N + block.x - 1) / block.x);
+
     for(int two_d=1;two_d<=N>>1;two_d<<=1){
         int two_dplus = two_d<<1;
-        add<<<grid_f,block>>>(input, two_dplus, two_d, N);
+        //printf("%d\n",two_dplus);
+        dim3 grid_f(((N/two_d) + block.x - 1) / block.x);
+        add<<<grid_f,block>>>(input, two_dplus, two_d, lim);
     }
     zero<<<1,1>>>(input,N-1);
     for(int two_d=N>>1;two_d>=1;two_d>>=1){
         int two_dplus=two_d<<1;
-        redu<<<grid_f,block>>>(input, two_dplus, two_d, N);
+        dim3 grid_f(((N/two_d) + block.x - 1) / block.x);
+        redu<<<grid_f,block>>>(input, two_dplus, two_d, lim);
     }
     cudaMemcpy(result, input, N*sizeof(int), cudaMemcpyDeviceToDevice);
     return;
@@ -128,7 +127,7 @@ double cudaScan(int* inarray, int* end, int* resultarray)
 
     double startTime = CycleTimer::currentSeconds();
 
-    exclusive_scan(device_input, N, device_result);
+    exclusive_scan(device_input, rounded_length, device_result, N);
 
     // Wait for completion
     cudaDeviceSynchronize();
@@ -222,7 +221,7 @@ int find_repeats(int* device_input, int length, int* device_output, int *temp) {
     int rlength = nextPow2(length);
     dim3 grid((rlength + block.x - 1) / block.x);
     fr<<<grid, block>>>(device_input, length, temp);
-    exclusive_scan(temp, rlength, temp);
+    exclusive_scan(temp, rlength, temp, length);
     sub<<<grid, block>>>(temp, length, device_input);
     work<<<grid, block>>>(device_input, temp, length, device_output);
     int *result = new int;
