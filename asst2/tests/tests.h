@@ -509,7 +509,7 @@ TestResults simpleTest(ITaskSystem* t, bool do_async) {
     int num_elements_per_task = 2;
     int num_tasks = 3;
     int num_elements = num_elements_per_task * num_tasks;
-    int num_bulk_task_launches = 1;
+    int num_bulk_task_launches = 2;
 
     int* array = new int[num_elements];
 
@@ -531,7 +531,7 @@ TestResults simpleTest(ITaskSystem* t, bool do_async) {
         t->sync();
     } else {
         t->run(&first, num_tasks);
-        //t->run(&second, num_tasks);
+        t->run(&second, num_tasks);
     }
     double end_time = CycleTimer::currentSeconds();
 
@@ -625,9 +625,11 @@ TestResults pingPongTest(ITaskSystem* t, bool equal_work, bool do_async,
             }
             prev_task_id = t->runAsyncWithDeps(
                 runnables[i], num_tasks, deps);
+            //printf("%d\n",i);
         } else {
             t->run(runnables[i], num_tasks);
         }
+        
     }
     if (do_async)
         t->sync();
