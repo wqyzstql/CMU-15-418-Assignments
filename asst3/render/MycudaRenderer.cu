@@ -400,12 +400,12 @@ __global__ void kernelRenderCircles() {
     // for all pixels in the bonding box
 
     //need save:for index, save [invWidth, invHeight, screenMin/MaxX/Y]
-    cuConstRendererParams.invHeight[index] = invHeight;
-    cuConstRendererParams.invWidth[index] = invHeight;
-    cuConstRendererParams.screenMinX[index] = screenMinX;
-    cuConstRendererParams.screenMinY[index] = screenMinY;
-    cuConstRendererParams.screenMaxX[index] = screenMaxX;
-    cuConstRendererParams.screenMaxY[index] = screenMaxY;
+    // cuConstRendererParams.invHeight[index] = invHeight;
+    // cuConstRendererParams.invWidth[index] = invHeight;
+    // cuConstRendererParams.screenMinX[index] = screenMinX;
+    // cuConstRendererParams.screenMinY[index] = screenMinY;
+    // cuConstRendererParams.screenMaxX[index] = screenMaxX;
+    // cuConstRendererParams.screenMaxY[index] = screenMaxY;
     
 
     for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {

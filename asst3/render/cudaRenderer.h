@@ -20,12 +20,17 @@ private:
     float* velocity;
     float* color;
     float* radius;
-
     float* cudaDevicePosition;
     float* cudaDeviceVelocity;
     float* cudaDeviceColor;
     float* cudaDeviceRadius;
     float* cudaDeviceImageData;
+    float* cudainvWidth;
+    float* cudainvHeight;
+    short* cudascreenMinX;
+    short* cudascreenMinY;
+    short* cudascreenMaxX;
+    short* cudascreenMaxY;
 
 public:
 
