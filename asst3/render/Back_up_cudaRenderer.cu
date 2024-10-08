@@ -26,12 +26,6 @@ struct GlobalConstants {
     float* velocity;
     float* color;
     float* radius;
-    float* invWidth;
-    float* invHeight;
-    short* screenMinX;
-    short* screenMinY;
-    short* screenMaxX;
-    short* screenMaxY;
 
     int imageWidth;
     int imageHeight;
@@ -323,8 +317,7 @@ __global__ void kernelAdvanceSnowflake() {
 // pixel from the circle.  Update of the image is done in this
 // function.  Called by kernelRenderCircles()
 __device__ __inline__ void
-shadePixel2(int circleIndex, float2 pixelCenter, float3 p,int base  ){
-//shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
+shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
     float diffX = p.x - pixelCenter.x;
     float diffY = p.y - pixelCenter.y;
     float pixelDist = diffX * diffX + diffY * diffY;
@@ -338,7 +331,7 @@ shadePixel2(int circleIndex, float2 pixelCenter, float3 p,int base  ){
         const float kCircleMaxAlpha = .5f;
         const float falloffScale = 4.f;
         float normPixelDist = sqrt(pixelDist) / rad;
-        rgb = lookupColor(normPixelDist);   
+        rgb = lookupColor(normPixelDist);
         float maxAlpha = .6f + .4f * (1.f-p.z);
         maxAlpha = kCircleMaxAlpha * fmaxf(fminf(maxAlpha, 1.f), 0.f); // kCircleMaxAlpha * clamped value
         alpha = maxAlpha * exp(-1.f * falloffScale * normPixelDist * normPixelDist);
@@ -348,10 +341,13 @@ shadePixel2(int circleIndex, float2 pixelCenter, float3 p,int base  ){
         alpha = .5f;
     }
     float oneMinusAlpha = 1.f - alpha;
-    atomicAdd(&cuConstRendererParams.imageData[base], alpha * rgb.x - oneMinusAlpha * cuConstRendererParams.imageData[base]);
-    atomicAdd(&cuConstRendererParams.imageData[base+1], alpha * rgb.y - oneMinusAlpha * cuConstRendererParams.imageData[base+1]);
-    atomicAdd(&cuConstRendererParams.imageData[base+2], alpha * rgb.z - oneMinusAlpha * cuConstRendererParams.imageData[base+2]);
-    atomicAdd(&cuConstRendererParams.imageData[base+3], alpha);
+    float4 existingColor = *imagePtr;
+    float4 newColor;
+    newColor.x = alpha * rgb.x + oneMinusAlpha * existingColor.x;
+    newColor.y = alpha * rgb.y + oneMinusAlpha * existingColor.y;
+    newColor.z = alpha * rgb.z + oneMinusAlpha * existingColor.z;
+    newColor.w = alpha + existingColor.w;
+    *imagePtr = newColor;
     return;
 }
 
@@ -395,28 +391,16 @@ __global__ void kernelRenderCircles() {
     float invWidth = 1.f / imageWidth;
     float invHeight = 1.f / imageHeight;
 
-    // for all pixels in the bonding box
-
-    //need save:for index, save [invWidth, invHeight, screenMin/MaxX/Y]
-    cuConstRendererParams.invHeight[index] = invHeight;
-    cuConstRendererParams.invWidth[index] = invHeight;
-    cuConstRendererParams.screenMinX[index] = screenMinX;
-    cuConstRendererParams.screenMinY[index] = screenMinY;
-    cuConstRendererParams.screenMaxX[index] = screenMaxX;
-    cuConstRendererParams.screenMaxY[index] = screenMaxY;
-
+    // for all pixels in the bonding box        
 
     for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
-        //float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
-        int base=4 * (pixelY * imageWidth + screenMinX);
+        float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
         for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
             float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
                                                  invHeight * (static_cast<float>(pixelY) + 0.5f));
-            shadePixel2(index, pixelCenterNorm, p, base);
-            base+=4;
-            //shadePixel(index, pixelCenterNorm, p, imgPtr); //pixelCenterNorm:pixel(x,y) , p:circle(x,y,r)
-            //imgPtr:(r,g,b,a) 
-            //imgPtr++;
+            shadePixel(index, pixelCenterNorm, p, imgPtr); //pixelCenterNorm:pixel(x,y) , p:circle(x,y,r)
+            //imgPtr:(r,g,b,a)
+            imgPtr++;
         }
     }
 }
@@ -513,12 +497,6 @@ CudaRenderer::setup() {
     //
     // See the CUDA Programmer's Guide for descriptions of
     // cudaMalloc and cudaMemcpy
-    cudaMalloc(&cudainvWidth, sizeof(float) * numCircles);
-    cudaMalloc(&cudainvHeight, sizeof(float) * numCircles);
-    cudaMalloc(&cudascreenMinX, sizeof(short) * numCircles);
-    cudaMalloc(&cudascreenMinY, sizeof(short) * numCircles);
-    cudaMalloc(&cudascreenMaxX, sizeof(short) * numCircles);
-    cudaMalloc(&cudascreenMaxY, sizeof(short) * numCircles);
     cudaMalloc(&cudaDevicePosition, sizeof(float) * 3 * numCircles);
     cudaMalloc(&cudaDeviceVelocity, sizeof(float) * 3 * numCircles);
     cudaMalloc(&cudaDeviceColor, sizeof(float) * 3 * numCircles);
@@ -548,12 +526,6 @@ CudaRenderer::setup() {
     params.color = cudaDeviceColor;
     params.radius = cudaDeviceRadius;
     params.imageData = cudaDeviceImageData;
-    params.invHeight = cudainvHeight;
-    params.invWidth = cudainvWidth;
-    params.screenMinX = cudascreenMinX;
-    params.screenMinY = cudascreenMinY;
-    params.screenMaxX = cudascreenMaxX;
-    params.screenMaxY = cudascreenMaxY;
 
     cudaMemcpyToSymbol(cuConstRendererParams, &params, sizeof(GlobalConstants));
 
